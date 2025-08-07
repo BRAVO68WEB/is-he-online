@@ -9,6 +9,7 @@ class DiscordActivityMonitor {
   private readonly TARGET_USER_ID: string;
   private readonly PORT: number;
   private readonly API_KEY?: string;
+  private readonly REDIS_URL?: string;
 
   constructor() {
     // Environment variables validation
@@ -16,6 +17,7 @@ class DiscordActivityMonitor {
     this.TARGET_USER_ID = process.env.TARGET_USER_ID || '';
     this.PORT = parseInt(process.env.PORT || '3000');
     this.API_KEY = process.env.API_KEY;
+    this.REDIS_URL = process.env.REDIS_URL;
 
     if (!this.DISCORD_TOKEN) {
       console.error('❌ DISCORD_TOKEN environment variable is required');
@@ -33,7 +35,7 @@ class DiscordActivityMonitor {
     this.bot = new DiscordBot(this.DISCORD_TOKEN, this.TARGET_USER_ID);
     
     // Initialize uWebSockets.js server
-    this.server = new UWSServer(this.PORT, this.TARGET_USER_ID, this.API_KEY);
+    this.server = new UWSServer(this.PORT, this.TARGET_USER_ID, this.API_KEY, this.REDIS_URL);
 
     // Connect Discord activity updates to server broadcasts
     this.bot.onActivity((activity) => {
@@ -45,6 +47,9 @@ class DiscordActivityMonitor {
 
   private async start(): Promise<void> {
     try {
+      // Connect to Redis first
+      await this.server.connect();
+      
       // Start the server
       this.server.listen();
       
@@ -63,6 +68,7 @@ class DiscordActivityMonitor {
   public async shutdown(): Promise<void> {
     console.log('🛑 Shutting down Discord Activity Monitor...');
     await this.bot.disconnect();
+    await this.server.cleanup();
     process.exit(0);
   }
 }

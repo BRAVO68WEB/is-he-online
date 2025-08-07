@@ -19,6 +19,13 @@ export interface UserActivity {
   timestamp: number;
 }
 
+// Enhanced activity response with lifecycle timestamps
+export interface UserActivityResponse extends UserActivity {
+  online_since?: number;
+  offline_since?: number;
+  last_seen: number;
+}
+
 // Types for VSCode activity data
 export interface VSCodeActivity {
   workspace: {
@@ -42,16 +49,29 @@ export interface VSCodeActivity {
     };
   };
   timestamp: number;
+  sessionId: string;
+}
+
+// Enhanced VSCode activity response with lifecycle timestamps
+export interface VSCodeActivityResponse extends VSCodeActivity {
+  online_since?: number;
+  offline_since?: number;
+  last_seen: number;
 }
 
 // HTTP response interfaces
 export interface HealthResponse {
   status: string;
   botConnected: boolean;
+  redisConnected: boolean;
   monitoringUser: string;
   activeStreams: number;
   hasVSCodeActivity: boolean;
   apiKeyRequired: boolean;
+  discordActive: boolean;
+  vscodeActive: boolean;
+  lastDiscordUpdate?: number;
+  lastVSCodeUpdate?: number;
 }
 
 export interface ApiResponse {

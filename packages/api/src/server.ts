@@ -1,23 +1,26 @@
 import { App, type HttpResponse, type HttpRequest, type TemplatedApp } from 'uws';
 import { randomBytes } from 'crypto';
-import type { UserActivity, VSCodeActivity, HealthResponse, ApiResponse } from './types.js';
+import type { UserActivity, VSCodeActivity, HealthResponse, ApiResponse, UserActivityResponse, VSCodeActivityResponse } from './types.js';
+import { RedisManager } from './redis-manager.js';
 
 export class UWSServer {
   private app: TemplatedApp;
   private port: number;
   private apiKey: string;
-  private currentDiscordActivity: UserActivity | null = null;
-  private currentVSCodeActivity: VSCodeActivity | null = null;
+  private redis: RedisManager;
   private sseConnections: Set<HttpResponse> = new Set();
   private targetUserId: string;
+  private cleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor(port: number, targetUserId: string, apiKey?: string) {
+  constructor(port: number, targetUserId: string, apiKey?: string, redisUrl?: string) {
     this.port = port;
     this.targetUserId = targetUserId;
     this.apiKey = apiKey || this.generateApiKey();
+    this.redis = new RedisManager(redisUrl);
     this.app = App();
     this.setupRoutes();
     this.setupCors();
+    this.startCleanupInterval();
   }
 
   private generateApiKey(): string {
@@ -25,6 +28,21 @@ export class UWSServer {
     console.log(`🔑 Generated API Key: ${key}`);
     console.log('💡 Add this to your .env file as API_KEY=your_generated_key');
     return key;
+  }
+
+  private startCleanupInterval(): void {
+    // Run cleanup every 5 minutes
+    this.cleanupInterval = setInterval(async () => {
+      try {
+        await this.redis.cleanup();
+      } catch (error) {
+        console.error('❌ Error during cleanup:', error);
+      }
+    }, 5 * 60 * 1000);
+  }
+
+  public async connect(): Promise<void> {
+    await this.redis.connect();
   }
 
   private setupCors(): void {
@@ -48,43 +66,85 @@ export class UWSServer {
 
   private setupRoutes(): void {
     // Health check endpoint
-    this.app.get('/health', (res: HttpResponse) => {
-      const response: HealthResponse = {
-        status: 'ok',
-        botConnected: true, // Will be updated by Discord bot
-        monitoringUser: this.targetUserId,
-        activeStreams: this.sseConnections.size,
-        hasVSCodeActivity: this.currentVSCodeActivity !== null,
-        apiKeyRequired: true,
-      };
+    this.app.get('/health', async (res: HttpResponse) => {
+      try {
+        const healthStats = await this.redis.getHealthStats();
+        
+        const response: HealthResponse = {
+          status: 'ok',
+          botConnected: true, // Will be updated by Discord bot
+          redisConnected: healthStats.redis_connected,
+          monitoringUser: this.targetUserId,
+          activeStreams: this.sseConnections.size,
+          hasVSCodeActivity: healthStats.vscode_active,
+          apiKeyRequired: true,
+          discordActive: healthStats.discord_active,
+          vscodeActive: healthStats.vscode_active,
+          lastDiscordUpdate: healthStats.last_discord_update,
+          lastVSCodeUpdate: healthStats.last_vscode_update,
+        };
 
-      res.cork(() => {
-        this.addCorsHeaders(res)
-            .writeHeader('Content-Type', 'application/json')
-            .end(JSON.stringify(response));
-      });
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(response));
+        });
+      } catch (error) {
+        console.error('❌ Health check error:', error);
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('500 Internal Server Error')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify({ 
+                status: 'error', 
+                error: 'Health check failed',
+                timestamp: Date.now()
+              }));
+        });
+      }
     });
 
     // Current activity endpoint
-    this.app.get('/activity', (res: HttpResponse) => {
-      const activity = this.currentDiscordActivity || {
-        userId: this.targetUserId,
-        username: 'Unknown',
-        discriminator: '0000',
-        status: 'offline',
-        activities: [],
-        timestamp: Date.now(),
-      };
+    this.app.get('/activity', async (res: HttpResponse) => {
+      try {
+        const activityData = await this.redis.getDiscordActivity();
+        
+        const response: UserActivityResponse = activityData ? {
+          ...(activityData.activity as UserActivity),
+          online_since: activityData.online_since,
+          offline_since: activityData.offline_since,
+          last_seen: activityData.last_seen,
+        } : {
+          userId: this.targetUserId,
+          username: 'Unknown',
+          discriminator: '0000',
+          status: 'offline',
+          activities: [],
+          timestamp: Date.now(),
+          last_seen: Date.now(),
+        };
 
-      res.cork(() => {
-        this.addCorsHeaders(res)
-            .writeHeader('Content-Type', 'application/json')
-            .end(JSON.stringify(activity));
-      });
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(response));
+        });
+      } catch (error) {
+        console.error('❌ Error getting activity:', error);
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('500 Internal Server Error')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify({ 
+                error: 'Failed to get activity',
+                timestamp: Date.now()
+              }));
+        });
+      }
     });
 
     // Protected VSCode activity endpoint
-    this.app.post('/vscode-activity', (res: HttpResponse, req: HttpRequest) => {
+    this.app.post('/vscode-activity', async (res: HttpResponse, req: HttpRequest) => {
       const authHeader = req.getHeader('authorization');
       const apiKeyFromHeader = authHeader?.replace('Bearer ', '') || authHeader?.replace('ApiKey ', '');
 
@@ -106,33 +166,53 @@ export class UWSServer {
 
       // Read request body
       let buffer = Buffer.alloc(0);
-      res.onData((chunk: ArrayBuffer, isLast: boolean) => {
+      res.onData(async (chunk: ArrayBuffer, isLast: boolean) => {
         buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
         
         if (isLast) {
           try {
             const activity: VSCodeActivity = JSON.parse(buffer.toString());
             
-            console.log(`💻 VSCode activity update: ${activity.workspace.name}/${activity.editor.fileName}:${activity.editor.lineNumber}`);
+            // Try to update activity in Redis with caching/rate limiting
+            const updateResult = await this.redis.setVSCodeActivity(activity);
             
-            this.currentVSCodeActivity = activity;
-            this.broadcastVSCodeActivity(activity);
-            
-            const response: ApiResponse = {
-              success: true,
-              timestamp: Date.now(),
-            };
-            
-            res.cork(() => {
-              this.addCorsHeaders(res)
-                  .writeHeader('Content-Type', 'application/json')
-                  .end(JSON.stringify(response));
-            });
+            if (updateResult.updated) {
+              console.log(`💻 VSCode activity update: ${activity.workspace.name}/${activity.editor.fileName}:${activity.editor.lineNumber}`);
+              
+              // Only broadcast if actually updated
+              this.broadcastVSCodeActivity(activity);
+              
+              const response: ApiResponse = {
+                success: true,
+                timestamp: Date.now(),
+              };
+              
+              res.cork(() => {
+                this.addCorsHeaders(res)
+                    .writeHeader('Content-Type', 'application/json')
+                    .end(JSON.stringify(response));
+              });
+            } else {
+              // Activity was rate limited or not significantly different
+              const response: ApiResponse = {
+                success: true,
+                timestamp: Date.now(),
+                error: updateResult.reason,
+              };
+              
+              res.cork(() => {
+                this.addCorsHeaders(res)
+                    .writeStatus('202 Accepted')
+                    .writeHeader('Content-Type', 'application/json')
+                    .end(JSON.stringify(response));
+              });
+            }
           } catch (error) {
+            console.error('❌ VSCode activity error:', error);
             const errorResponse: ApiResponse = {
               success: false,
               timestamp: Date.now(),
-              error: 'Invalid JSON payload',
+              error: 'Invalid JSON payload or database error',
             };
             
             res.cork(() => {
@@ -151,7 +231,7 @@ export class UWSServer {
     });
 
     // Server-Sent Events endpoint
-    this.app.get('/events', (res: HttpResponse, req: HttpRequest) => {
+    this.app.get('/events', async (res: HttpResponse, req: HttpRequest) => {
       // Set SSE headers with CORS
       res.cork(() => {
         this.addCorsHeaders(res)
@@ -166,12 +246,30 @@ export class UWSServer {
       console.log(`📡 New SSE client connected. Total streams: ${this.sseConnections.size}`);
 
       // Send initial data if available
-      if (this.currentDiscordActivity) {
-        this.sendSSEMessage(res, 'activity-update', this.currentDiscordActivity);
-      }
+      try {
+        const discordData = await this.redis.getDiscordActivity();
+        if (discordData) {
+          const activityResponse: UserActivityResponse = {
+            ...(discordData.activity as UserActivity),
+            online_since: discordData.online_since,
+            offline_since: discordData.offline_since,
+            last_seen: discordData.last_seen,
+          };
+          this.sendSSEMessage(res, 'activity-update', activityResponse);
+        }
 
-      if (this.currentVSCodeActivity) {
-        this.sendSSEMessage(res, 'vscode-update', this.currentVSCodeActivity);
+        const vscodeData = await this.redis.getVSCodeActivity();
+        if (vscodeData) {
+          const vscodeResponse: VSCodeActivityResponse = {
+            ...(vscodeData.activity as VSCodeActivity),
+            online_since: vscodeData.online_since,
+            offline_since: vscodeData.offline_since,
+            last_seen: vscodeData.last_seen,
+          };
+          this.sendSSEMessage(res, 'vscode-update', vscodeResponse);
+        }
+      } catch (error) {
+        console.error('❌ Error sending initial SSE data:', error);
       }
 
       // Setup heartbeat
@@ -215,39 +313,71 @@ export class UWSServer {
     }
   }
 
-  public broadcastDiscordActivity(activity: UserActivity): void {
-    this.currentDiscordActivity = activity;
-    console.log(`📤 Broadcasting Discord activity to ${this.sseConnections.size} streams`);
-    
-    const deadConnections: HttpResponse[] = [];
-    
-    for (const connection of this.sseConnections) {
-      if (connection.aborted) {
-        deadConnections.push(connection);
-      } else {
-        this.sendSSEMessage(connection, 'activity-update', activity);
+  public async broadcastDiscordActivity(activity: UserActivity): Promise<void> {
+    try {
+      // Store in Redis first
+      await this.redis.setDiscordActivity(activity);
+      
+      // Get the activity with timestamps for broadcasting
+      const activityData = await this.redis.getDiscordActivity();
+      if (!activityData) return;
+
+      const activityResponse: UserActivityResponse = {
+        ...(activityData.activity as UserActivity),
+        online_since: activityData.online_since,
+        offline_since: activityData.offline_since,
+        last_seen: activityData.last_seen,
+      };
+
+      console.log(`📤 Broadcasting Discord activity to ${this.sseConnections.size} streams`);
+      
+      const deadConnections: HttpResponse[] = [];
+      
+      for (const connection of this.sseConnections) {
+        if (connection.aborted) {
+          deadConnections.push(connection);
+        } else {
+          this.sendSSEMessage(connection, 'activity-update', activityResponse);
+        }
       }
+      
+      // Clean up dead connections
+      deadConnections.forEach(conn => this.sseConnections.delete(conn));
+    } catch (error) {
+      console.error('❌ Error broadcasting Discord activity:', error);
     }
-    
-    // Clean up dead connections
-    deadConnections.forEach(conn => this.sseConnections.delete(conn));
   }
 
-  private broadcastVSCodeActivity(activity: VSCodeActivity): void {
-    console.log(`📤 Broadcasting VSCode activity to ${this.sseConnections.size} streams`);
-    
-    const deadConnections: HttpResponse[] = [];
-    
-    for (const connection of this.sseConnections) {
-      if (connection.aborted) {
-        deadConnections.push(connection);
-      } else {
-        this.sendSSEMessage(connection, 'vscode-update', activity);
+  private async broadcastVSCodeActivity(activity: VSCodeActivity): Promise<void> {
+    try {
+      // Get the activity with timestamps for broadcasting
+      const activityData = await this.redis.getVSCodeActivity();
+      if (!activityData) return;
+
+      const vscodeResponse: VSCodeActivityResponse = {
+        ...(activityData.activity as VSCodeActivity),
+        online_since: activityData.online_since,
+        offline_since: activityData.offline_since,
+        last_seen: activityData.last_seen,
+      };
+
+      console.log(`📤 Broadcasting VSCode activity to ${this.sseConnections.size} streams`);
+      
+      const deadConnections: HttpResponse[] = [];
+      
+      for (const connection of this.sseConnections) {
+        if (connection.aborted) {
+          deadConnections.push(connection);
+        } else {
+          this.sendSSEMessage(connection, 'vscode-update', vscodeResponse);
+        }
       }
+      
+      // Clean up dead connections
+      deadConnections.forEach(conn => this.sseConnections.delete(conn));
+    } catch (error) {
+      console.error('❌ Error broadcasting VSCode activity:', error);
     }
-    
-    // Clean up dead connections
-    deadConnections.forEach(conn => this.sseConnections.delete(conn));
   }
 
   public listen(): void {
@@ -267,5 +397,12 @@ export class UWSServer {
 
   public getApiKey(): string {
     return this.apiKey;
+  }
+
+  public async cleanup(): Promise<void> {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+    }
+    await this.redis.disconnect();
   }
 }
