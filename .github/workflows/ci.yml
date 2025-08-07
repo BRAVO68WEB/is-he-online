@@ -23,7 +23,7 @@ jobs:
 
     strategy:
       matrix:
-        node-version: [18.x, 20.x]
+        node-version: [20.x, 22.x]
 
     steps:
       - name: Checkout code
@@ -92,7 +92,7 @@ jobs:
           echo "DISCORD_TOKEN=dummy_token" > .env
           echo "TARGET_USER_ID=123456789" >> .env
           echo "API_KEY=dummy_api_key" >> .env
-          docker-compose config
+          docker compose config
 
   lint:
     runs-on: ubuntu-latest

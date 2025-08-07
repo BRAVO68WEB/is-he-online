@@ -231,7 +231,7 @@ export class UWSServer {
     });
 
     // Server-Sent Events endpoint
-    this.app.get('/events', async (res: HttpResponse, req: HttpRequest) => {
+    this.app.get('/events', (res: HttpResponse, req: HttpRequest) => {
       // Set SSE headers with CORS
       res.cork(() => {
         this.addCorsHeaders(res)
@@ -245,32 +245,10 @@ export class UWSServer {
       this.sseConnections.add(res);
       console.log(`📡 New SSE client connected. Total streams: ${this.sseConnections.size}`);
 
-      // Send initial data if available
-      try {
-        const discordData = await this.redis.getDiscordActivity();
-        if (discordData) {
-          const activityResponse: UserActivityResponse = {
-            ...(discordData.activity as UserActivity),
-            online_since: discordData.online_since,
-            offline_since: discordData.offline_since,
-            last_seen: discordData.last_seen,
-          };
-          this.sendSSEMessage(res, 'activity-update', activityResponse);
-        }
-
-        const vscodeData = await this.redis.getVSCodeActivity();
-        if (vscodeData) {
-          const vscodeResponse: VSCodeActivityResponse = {
-            ...(vscodeData.activity as VSCodeActivity),
-            online_since: vscodeData.online_since,
-            offline_since: vscodeData.offline_since,
-            last_seen: vscodeData.last_seen,
-          };
-          this.sendSSEMessage(res, 'vscode-update', vscodeResponse);
-        }
-      } catch (error) {
+      // Send initial data if available (async operation)
+      this.sendInitialSSEData(res).catch(error => {
         console.error('❌ Error sending initial SSE data:', error);
-      }
+      });
 
       // Setup heartbeat
       const heartbeatInterval = setInterval(() => {
@@ -310,6 +288,34 @@ export class UWSServer {
       res.cork(() => {
         res.write(message);
       });
+    }
+  }
+
+  private async sendInitialSSEData(res: HttpResponse): Promise<void> {
+    try {
+      const discordData = await this.redis.getDiscordActivity();
+      if (discordData && !res.aborted) {
+        const activityResponse: UserActivityResponse = {
+          ...(discordData.activity as UserActivity),
+          online_since: discordData.online_since,
+          offline_since: discordData.offline_since,
+          last_seen: discordData.last_seen,
+        };
+        this.sendSSEMessage(res, 'activity-update', activityResponse);
+      }
+
+      const vscodeData = await this.redis.getVSCodeActivity();
+      if (vscodeData && !res.aborted) {
+        const vscodeResponse: VSCodeActivityResponse = {
+          ...(vscodeData.activity as VSCodeActivity),
+          online_since: vscodeData.online_since,
+          offline_since: vscodeData.offline_since,
+          last_seen: vscodeData.last_seen,
+        };
+        this.sendSSEMessage(res, 'vscode-update', vscodeResponse);
+      }
+    } catch (error) {
+      console.error('❌ Error in sendInitialSSEData:', error);
     }
   }
 
