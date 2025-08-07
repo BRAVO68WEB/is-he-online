@@ -43,6 +43,12 @@ export class UWSServer {
 
   public async connect(): Promise<void> {
     await this.redis.connect();
+    
+    // Set up offline callbacks for heartbeat timeout events
+    this.redis.setOfflineCallbacks(
+      () => this.broadcastDiscordOffline(),
+      () => this.broadcastVSCodeOffline()
+    );
   }
 
   private setupCors(): void {
@@ -155,6 +161,190 @@ export class UWSServer {
 
       res.onAborted(() => {
         console.log('❌ VSCode activity request aborted');
+      });
+    });
+
+    // VSCode cleanup endpoint (immediate cleanup when extension closes)
+    this.app.post('/vscode-cleanup', (res: HttpResponse, req: HttpRequest) => {
+      const authHeader = req.getHeader('authorization');
+      const apiKeyFromHeader = authHeader?.replace('Bearer ', '') || authHeader?.replace('ApiKey ', '');
+
+      if (!apiKeyFromHeader || apiKeyFromHeader !== this.apiKey) {
+        const errorResponse: ApiResponse = {
+          success: false,
+          timestamp: Date.now(),
+          error: 'Unauthorized: Invalid or missing API key',
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('401 Unauthorized')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(errorResponse));
+        });
+        return;
+      }
+
+      // Immediately clear VSCode activity
+      this.redis.clearVSCodeActivity().then(() => {
+        console.log('🧹 VSCode activity cleared immediately');
+        
+        // Broadcast offline status to all SSE clients
+        this.sseConnections.forEach(sseRes => {
+          if (!sseRes.aborted) {
+            this.sendSSEMessage(sseRes, 'vscode-offline', { 
+              timestamp: Date.now(),
+              reason: 'VSCode extension deactivated'
+            });
+          }
+        });
+
+        const successResponse: ApiResponse = {
+          success: true,
+          timestamp: Date.now(),
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(successResponse));
+        });
+      }).catch(error => {
+        console.error('❌ Error clearing VSCode activity:', error);
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('500 Internal Server Error')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify({
+                success: false,
+                timestamp: Date.now(),
+                error: 'Failed to clear VSCode activity',
+              }));
+        });
+      });
+    });
+
+    // VSCode heartbeat endpoint
+    this.app.post('/vscode-heartbeat', (res: HttpResponse, req: HttpRequest) => {
+      const authHeader = req.getHeader('authorization');
+      const apiKeyFromHeader = authHeader?.replace('Bearer ', '') || authHeader?.replace('ApiKey ', '');
+
+      if (!apiKeyFromHeader || apiKeyFromHeader !== this.apiKey) {
+        const errorResponse: ApiResponse = {
+          success: false,
+          timestamp: Date.now(),
+          error: 'Unauthorized: Invalid or missing API key',
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('401 Unauthorized')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(errorResponse));
+        });
+        return;
+      }
+
+      // Update heartbeat
+      this.redis.updateVSCodeHeartbeat().then(() => {
+        const successResponse: ApiResponse = {
+          success: true,
+          timestamp: Date.now(),
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(successResponse));
+        });
+      }).catch(error => {
+        console.error('❌ Error updating VSCode heartbeat:', error);
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('500 Internal Server Error')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify({
+                success: false,
+                timestamp: Date.now(),
+                error: 'Failed to update heartbeat',
+              }));
+        });
+      });
+    });
+
+    // VSCode session start endpoint
+    this.app.post('/vscode-session-start', (res: HttpResponse, req: HttpRequest) => {
+      const authHeader = req.getHeader('authorization');
+      const apiKeyFromHeader = authHeader?.replace('Bearer ', '') || authHeader?.replace('ApiKey ', '');
+
+      if (!apiKeyFromHeader || apiKeyFromHeader !== this.apiKey) {
+        const errorResponse: ApiResponse = {
+          success: false,
+          timestamp: Date.now(),
+          error: 'Unauthorized: Invalid or missing API key',
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('401 Unauthorized')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(errorResponse));
+        });
+        return;
+      }
+
+      // Read request body for sessionId
+      let buffer = Buffer.alloc(0);
+      res.onData((chunk: ArrayBuffer, isLast: boolean) => {
+        buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
+
+        if (isLast) {
+          try {
+            const data = JSON.parse(buffer.toString());
+            const sessionId = data.sessionId;
+
+            this.redis.startVSCodeSession(sessionId).then(() => {
+              const successResponse: ApiResponse = {
+                success: true,
+                timestamp: Date.now(),
+              };
+              
+              res.cork(() => {
+                this.addCorsHeaders(res)
+                    .writeHeader('Content-Type', 'application/json')
+                    .end(JSON.stringify(successResponse));
+              });
+            }).catch(error => {
+              console.error('❌ Error starting VSCode session:', error);
+              res.cork(() => {
+                this.addCorsHeaders(res)
+                    .writeStatus('500 Internal Server Error')
+                    .writeHeader('Content-Type', 'application/json')
+                    .end(JSON.stringify({
+                      success: false,
+                      timestamp: Date.now(),
+                      error: 'Failed to start session',
+                    }));
+              });
+            });
+          } catch (parseError) {
+            console.error('❌ Error parsing session start request:', parseError);
+            res.cork(() => {
+              this.addCorsHeaders(res)
+                  .writeStatus('400 Bad Request')
+                  .writeHeader('Content-Type', 'application/json')
+                  .end(JSON.stringify({
+                    success: false,
+                    timestamp: Date.now(),
+                    error: 'Invalid JSON payload',
+                  }));
+            });
+          }
+        }
+      });
+
+      res.onAborted(() => {
+        console.log('❌ VSCode session start request aborted');
       });
     });
 
@@ -423,6 +613,30 @@ export class UWSServer {
 
   public getApiKey(): string {
     return this.apiKey;
+  }
+
+  private broadcastDiscordOffline(): void {
+    console.log('📤 Broadcasting Discord offline event');
+    this.sseConnections.forEach(connection => {
+      if (!connection.aborted) {
+        this.sendSSEMessage(connection, 'discord-offline', {
+          timestamp: Date.now(),
+          reason: 'Discord heartbeat timeout'
+        });
+      }
+    });
+  }
+
+  private broadcastVSCodeOffline(): void {
+    console.log('📤 Broadcasting VSCode offline event');
+    this.sseConnections.forEach(connection => {
+      if (!connection.aborted) {
+        this.sendSSEMessage(connection, 'vscode-offline', {
+          timestamp: Date.now(),
+          reason: 'VSCode heartbeat timeout'
+        });
+      }
+    });
   }
 
   public async cleanup(): Promise<void> {

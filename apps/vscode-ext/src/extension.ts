@@ -56,13 +56,18 @@ class VSCodePresenceMonitor {
   private lastSentTimestamp: number = 0;
   private sendQueue: VSCodeActivity[] = [];
   private isSending: boolean = false;
-  private rateLimitDelay: number = 2000; // Minimum 2 seconds between sends
+  private rateLimitDelay: number = 1000; // Minimum 1 second between sends
   private debounceTimer: NodeJS.Timeout | null = null;
-  private readonly CACHE_TTL = 60000; // 1 minute cache TTL for git info
+  private readonly CACHE_TTL = 30000; // 30 seconds cache TTL for git info
   
   // Performance optimization: Event throttling
-  private readonly EVENT_THROTTLE_MS = 500; // Throttle events to max once per 500ms
+  private readonly EVENT_THROTTLE_MS = 200; // Throttle events to max once per 200ms
   private lastEventTimestamp: number = 0;
+  
+  // Heartbeat system
+  private heartbeatInterval: NodeJS.Timeout | null = null;
+  private readonly HEARTBEAT_INTERVAL = 20000; // Send heartbeat every 20 seconds (timeout is 30s)
+  private sessionStarted: boolean = false;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
@@ -223,6 +228,9 @@ class VSCodePresenceMonitor {
       }
     }, interval);
 
+    // Start heartbeat system
+    this.startHeartbeat();
+
     this.updateStatusBar();
     vscode.window.showInformationMessage('VS Code Presence Monitor started!');
   }
@@ -240,8 +248,13 @@ class VSCodePresenceMonitor {
       this.debounceTimer = null;
     }
 
+    // Stop heartbeat
+    this.stopHeartbeat();
+
     // Send final offline signal
-    this.sendOfflineSignal();
+    this.sendOfflineSignal().catch(() => {
+      // Ignore cleanup errors during stop
+    });
     
     this.updateStatusBar();
     vscode.window.showInformationMessage('VS Code Presence Monitor stopped!');
@@ -540,24 +553,117 @@ class VSCodePresenceMonitor {
     }
   }
 
-  private async sendOfflineSignal(): Promise<void> {
-    // Send a minimal signal to indicate going offline
-    if (this.lastActivity) {
-      const offlineActivity = {
-        ...this.lastActivity,
-        timestamp: Date.now(),
-        editor: {
-          ...this.lastActivity.editor,
-          fileName: '[OFFLINE]'
+  public async sendOfflineSignal(): Promise<void> {
+    // Send immediate cleanup signal to API
+    try {
+      const response = await fetch(`${this.serverUrl}/vscode-cleanup`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
         }
-      };
-      
-      try {
-        await this.sendActivity(offlineActivity);
-      } catch (error) {
-        // Ignore errors when sending offline signal
-        console.log('Could not send offline signal:', error);
+      });
+
+      if (response.ok) {
+        console.log('✅ VSCode activity cleaned up immediately');
+      } else {
+        console.log('⚠️ Could not clean up VSCode activity:', response.status);
       }
+    } catch (error) {
+      console.log('⚠️ Could not send cleanup signal:', error);
+      
+      // Fallback: Send offline activity signal
+      if (this.lastActivity) {
+        const offlineActivity = {
+          ...this.lastActivity,
+          timestamp: Date.now(),
+          editor: {
+            ...this.lastActivity.editor,
+            fileName: '[OFFLINE]'
+          }
+        };
+        
+        try {
+          await this.sendActivity(offlineActivity);
+        } catch (fallbackError) {
+          console.log('Could not send offline signal:', fallbackError);
+        }
+      }
+    }
+  }
+
+  // Heartbeat system methods
+  private startHeartbeat(): void {
+    // Send session start signal first
+    this.startSession();
+    
+    // Send initial heartbeat
+    this.sendHeartbeat();
+    
+    // Set up periodic heartbeat
+    this.heartbeatInterval = setInterval(() => {
+      this.sendHeartbeat();
+    }, this.HEARTBEAT_INTERVAL);
+    
+    console.log(`💓 Started heartbeat system (interval: ${this.HEARTBEAT_INTERVAL}ms)`);
+  }
+
+  private async startSession(): Promise<void> {
+    if (this.sessionStarted || !this.apiKey) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${this.serverUrl}/vscode-session-start`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ sessionId: this.sessionId }),
+        signal: AbortSignal.timeout(5000)
+      });
+
+      if (response.ok) {
+        this.sessionStarted = true;
+        console.log(`🎯 Started VSCode session: ${this.sessionId}`);
+      } else {
+        console.error(`❌ Failed to start session: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('❌ Error starting session:', error);
+    }
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+      this.sessionStarted = false;
+      console.log('💔 Stopped heartbeat system');
+    }
+  }
+
+  private async sendHeartbeat(): Promise<void> {
+    if (!this.isActive || !this.apiKey) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`${this.serverUrl}/vscode-heartbeat`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      });
+
+      if (!response.ok) {
+        console.error(`❌ Heartbeat failed: ${response.status}`);
+      }
+    } catch (error) {
+      console.error('❌ Error sending heartbeat:', error);
     }
   }
 
@@ -568,6 +674,10 @@ class VSCodePresenceMonitor {
     // Clear all timers
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
+    }
+    
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
     }
     
     // Clear caches
@@ -618,6 +728,13 @@ export function activate(context: vscode.ExtensionContext) {
 }
 
 export function deactivate() {
+  // Send cleanup signal before disposing
+  if (presenceMonitor) {
+    presenceMonitor.sendOfflineSignal().catch(() => {
+      // Ignore cleanup errors during deactivation
+    });
+  }
+  
   presenceMonitor?.dispose();
   presenceMonitor = null;
 }
