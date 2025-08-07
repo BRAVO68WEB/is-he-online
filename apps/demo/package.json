@@ -1,0 +1,14 @@
+{
+  "name": "@is-he-online/demo",
+  "version": "1.0.0",
+  "description": "Real-time web dashboard for monitoring Discord and VSCode activity",
+  "main": "index.html",
+  "scripts": {
+    "dev": "serve -p 8080 .",
+    "build": "echo 'No build needed for static HTML'",
+    "preview": "serve -p 8080 ."
+  },
+  "devDependencies": {
+    "serve": "^14.2.1"
+  }
+}

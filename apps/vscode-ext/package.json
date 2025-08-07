@@ -1,0 +1,111 @@
+{
+  "name": "is-he-online",
+  "displayName": "Bravo's VS Code Presence Monitor",
+  "description": "Real-time VSCode presence monitoring for Discord-style activity tracking",
+  "version": "1.0.0",
+  "publisher": "bravo68web",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "license": "MIT",
+  "author": {
+    "name": "Jyotirmoy <BRAVO68WEB> Bandyopadhayaya",
+    "email": "bravo68web@gmail.com",
+    "url": "https://github.com/bravo68web"
+  },
+  "homepage": "https://github.com/bravo68web/is-he-online",
+  "bugs": {
+    "url": "https://github.com/bravo68web/is-he-online/issues"
+  },
+  "icon": "is-he-online.png",
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "presence",
+    "activity",
+    "monitoring",
+    "discord",
+    "real-time",
+    "bravo68web",
+    "is-he-online"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bravo68web/is-he-online"
+  },
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "isHeOnline.start",
+        "title": "Start Presence Monitoring",
+        "category": "Is He Online"
+      },
+      {
+        "command": "isHeOnline.stop",
+        "title": "Stop Presence Monitoring",
+        "category": "Is He Online"
+      },
+      {
+        "command": "isHeOnline.status",
+        "title": "Show Presence Status",
+        "category": "Is He Online"
+      },
+      {
+        "command": "isHeOnline.setApiKey",
+        "title": "Set API Key",
+        "category": "Is He Online"
+      }
+    ],
+    "configuration": {
+      "title": "Bravo's VS Code Presence Monitor",
+      "properties": {
+        "isHeOnline.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "URL of the broadcast API server"
+        },
+        "isHeOnline.updateInterval": {
+          "type": "number",
+          "default": 1000,
+          "description": "Update interval in milliseconds"
+        },
+        "isHeOnline.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable presence monitoring"
+        },
+        "isHeOnline.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for secure authentication with the broadcast API"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "yarn run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "vscode:prepublish": "yarn run package",
+    "package": "yarn run check-types && node esbuild.js --production"
+  },
+  "devDependencies": {
+    "@types/node": "^18.19.121",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.8",
+    "minimatch": "^10.0.3",
+    "npm-run-all": "^4.1.5",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
