@@ -152,7 +152,7 @@ Protected endpoint for VSCode activity updates (requires API key)
 ### Quick Start with Docker Compose
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/BRAVO68WEB/is-he-online
 cd is-he-online/packages/api
 
 # Set up environment variables

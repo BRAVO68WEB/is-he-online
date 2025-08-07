@@ -16,8 +16,8 @@ VSCode extension that monitors your coding presence and broadcasts it to the Is 
 ### From VSIX (Recommended)
 1. **Build the extension**:
    ```bash
-   npm run build
-   npm run package
+   yarn run build
+   yarn run package
    ```
 
 2. **Install in VSCode**:
@@ -34,12 +34,12 @@ VSCode extension that monitors your coding presence and broadcasts it to the Is 
 
 2. **Install dependencies**:
    ```bash
-   npm install
+   yarn install
    ```
 
 3. **Start development**:
    ```bash
-   npm run dev
+   yarn run dev
    ```
 
 4. **Test the extension**:
@@ -71,7 +71,7 @@ The extension provides several configuration options:
 1. **Start the API server** (in `packages/api`):
    ```bash
    cd packages/api
-   npm run dev
+   yarn run dev
    ```
 
 2. **Install and configure the extension**:
