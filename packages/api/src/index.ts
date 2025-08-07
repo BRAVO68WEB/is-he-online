@@ -39,7 +39,9 @@ class DiscordActivityMonitor {
 
     // Connect Discord activity updates to server broadcasts
     this.bot.onActivity((activity) => {
-      this.server.broadcastDiscordActivity(activity);
+      this.server.broadcastDiscordActivity(activity).catch(error => {
+        console.error('❌ Error broadcasting Discord activity:', error);
+      });
     });
 
     this.start();
