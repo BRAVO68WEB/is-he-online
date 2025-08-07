@@ -1,6 +1,24 @@
 version: '3.8'
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: is-he-online-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - is-he-online-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
   api:
     build: 
       context: .
@@ -18,8 +36,15 @@ services:
       - PORT=3000
       - NODE_ENV=production
       
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379
+      
       # API Security
       - API_KEY=${API_KEY}
+    
+    depends_on:
+      redis:
+        condition: service_healthy
     
     # Health check
     healthcheck:
@@ -55,7 +80,7 @@ services:
     tmpfs:
       - /tmp:noexec,nosuid,size=100m
     
-# Named volumes for persistent data (if needed in future)
+# Named volumes for persistent data
 volumes:
-  api_data:
+  redis_data:
     driver: local

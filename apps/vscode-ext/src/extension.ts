@@ -32,6 +32,15 @@ interface VSCodeActivity {
   sessionId: string;
 }
 
+// Cache for git repository information to avoid repeated file reads
+interface GitRepoCache {
+  [workspacePath: string]: {
+    info: { name: string; remote: string; branch: string } | undefined;
+    lastChecked: number;
+    ttl: number;
+  };
+}
+
 class VSCodePresenceMonitor {
   private context: vscode.ExtensionContext;
   private isActive: boolean = false;
@@ -41,12 +50,24 @@ class VSCodePresenceMonitor {
   private apiKey: string;
   private sessionId: string;
   private statusBarItem: vscode.StatusBarItem;
+  
+  // Memory optimization: Caching and throttling
+  private gitRepoCache: GitRepoCache = {};
+  private lastSentTimestamp: number = 0;
+  private sendQueue: VSCodeActivity[] = [];
+  private isSending: boolean = false;
+  private rateLimitDelay: number = 2000; // Minimum 2 seconds between sends
+  private debounceTimer: NodeJS.Timeout | null = null;
+  private readonly CACHE_TTL = 60000; // 1 minute cache TTL for git info
+  
+  // Performance optimization: Event throttling
+  private readonly EVENT_THROTTLE_MS = 500; // Throttle events to max once per 500ms
+  private lastEventTimestamp: number = 0;
 
   constructor(context: vscode.ExtensionContext) {
     this.context = context;
     this.sessionId = this.generateSessionId();
-    this.serverUrl = vscode.workspace.getConfiguration('isHeOnline').get('serverUrl') || 'http://localhost:3000';
-    this.apiKey = vscode.workspace.getConfiguration('isHeOnline').get('apiKey') || '';
+    this.loadConfiguration();
     
     // Create status bar item
     this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -55,51 +76,126 @@ class VSCodePresenceMonitor {
     
     this.setupEventListeners();
     this.updateStatusBar();
+    
+    // Cleanup interval for memory management
+    this.setupCleanupInterval();
+    
+    // constructor init
+    this.serverUrl = vscode.workspace.getConfiguration('isHeOnline').get('serverUrl') || 'http://localhost:3000';
+    this.apiKey = vscode.workspace.getConfiguration('isHeOnline').get('apiKey') || '';
+    this.rateLimitDelay = Math.max(vscode.workspace.getConfiguration('isHeOnline').get('updateInterval') || 2000, 1000); // Min 1 second
+  }
+
+  private loadConfiguration(): void {
+    const config = vscode.workspace.getConfiguration('isHeOnline');
+    this.serverUrl = config.get('serverUrl') || 'http://localhost:3000';
+    this.apiKey = config.get('apiKey') || '';
+    this.rateLimitDelay = Math.max(config.get('updateInterval') || 2000, 1000); // Min 1 second
   }
 
   private generateSessionId(): string {
     return `vscode-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   }
 
+  private setupCleanupInterval(): void {
+    // Clean up cache every 5 minutes to prevent memory leaks
+    const cleanupInterval = setInterval(() => {
+      this.cleanupCaches();
+    }, 5 * 60 * 1000);
+    
+    this.context.subscriptions.push({
+      dispose: () => clearInterval(cleanupInterval)
+    });
+  }
+
+  private cleanupCaches(): void {
+    const now = Date.now();
+    
+    // Clean up expired git repo cache entries
+    for (const [path, cache] of Object.entries(this.gitRepoCache)) {
+      if (now - cache.lastChecked > cache.ttl) {
+        delete this.gitRepoCache[path];
+      }
+    }
+    
+    // Clear old activity if not active
+    if (!this.isActive && this.lastActivity) {
+      this.lastActivity = null;
+    }
+    
+    // Clear send queue if too old
+    this.sendQueue = this.sendQueue.filter(activity => 
+      now - activity.timestamp < 30000 // Keep only last 30 seconds
+    );
+    
+    // Force garbage collection hint (if available)
+    if (global.gc) {
+      global.gc();
+    }
+  }
+
   private setupEventListeners(): void {
+    // Throttled event handlers to prevent excessive calls
+    const throttledCaptureActivity = this.throttle(() => {
+      if (this.isActive) {
+        this.captureActivityDebounced();
+      }
+    }, this.EVENT_THROTTLE_MS);
+
     // Listen for active editor changes
-    vscode.window.onDidChangeActiveTextEditor(this.onActiveEditorChanged, this, this.context.subscriptions);
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeActiveTextEditor(() => throttledCaptureActivity())
+    );
     
-    // Listen for cursor position changes
-    vscode.window.onDidChangeTextEditorSelection(this.onSelectionChanged, this, this.context.subscriptions);
+    // Listen for cursor position changes (throttled more aggressively)
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeTextEditorSelection(this.throttle(() => {
+        if (this.isActive) {
+          this.captureActivityDebounced();
+        }
+      }, 1000)) // 1 second throttle for selection changes
+    );
     
-    // Listen for visible range changes (scrolling)
-    vscode.window.onDidChangeTextEditorVisibleRanges(this.onVisibleRangeChanged, this, this.context.subscriptions);
+    // Listen for visible range changes (scrolling) - least priority
+    this.context.subscriptions.push(
+      vscode.window.onDidChangeTextEditorVisibleRanges(this.throttle(() => {
+        if (this.isActive) {
+          this.captureActivityDebounced();
+        }
+      }, 2000)) // 2 second throttle for scrolling
+    );
     
     // Listen for configuration changes
-    vscode.workspace.onDidChangeConfiguration(this.onConfigurationChanged, this, this.context.subscriptions);
+    this.context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('isHeOnline')) {
+          this.loadConfiguration();
+        }
+      })
+    );
   }
 
-  private onActiveEditorChanged(editor: vscode.TextEditor | undefined): void {
-    if (this.isActive && editor) {
+  // Utility method for throttling function calls
+  private throttle<T extends (...args: any[]) => void>(func: T, delay: number): T {
+    let lastCallTime = 0;
+    return ((...args: any[]) => {
+      const now = Date.now();
+      if (now - lastCallTime >= delay) {
+        lastCallTime = now;
+        func(...args);
+      }
+    }) as T;
+  }
+
+  // Debounced activity capture to avoid rapid-fire updates
+  private captureActivityDebounced(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    
+    this.debounceTimer = setTimeout(() => {
       this.captureActivity();
-    }
-  }
-
-  private onSelectionChanged(event: vscode.TextEditorSelectionChangeEvent): void {
-    if (this.isActive) {
-      this.captureActivity();
-    }
-  }
-
-  private onVisibleRangeChanged(event: vscode.TextEditorVisibleRangesChangeEvent): void {
-    if (this.isActive) {
-      this.captureActivity();
-    }
-  }
-
-  private onConfigurationChanged(event: vscode.ConfigurationChangeEvent): void {
-    if (event.affectsConfiguration('isHeOnline.serverUrl')) {
-      this.serverUrl = vscode.workspace.getConfiguration('isHeOnline').get('serverUrl') as string || 'http://localhost:3000';
-    }
-    if (event.affectsConfiguration('isHeOnline.apiKey')) {
-      this.apiKey = vscode.workspace.getConfiguration('isHeOnline').get('apiKey') as string || '';
-    }
+    }, 500); // 500ms debounce
   }
 
   public start(): void {
@@ -119,8 +215,8 @@ class VSCodePresenceMonitor {
     this.isActive = true;
     this.captureActivity();
     
-    // Set up periodic updates
-    const interval = vscode.workspace.getConfiguration('isHeOnline').get('updateInterval') as number || 1000;
+    // Set up periodic updates with longer intervals to reduce server load
+    const interval = Math.max(this.rateLimitDelay, 5000); // Minimum 5 seconds
     this.updateInterval = setInterval(() => {
       if (this.isActive) {
         this.captureActivity();
@@ -138,7 +234,15 @@ class VSCodePresenceMonitor {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
     }
+    
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = null;
+    }
 
+    // Send final offline signal
+    this.sendOfflineSignal();
+    
     this.updateStatusBar();
     vscode.window.showInformationMessage('VS Code Presence Monitor stopped!');
   }
@@ -147,9 +251,10 @@ class VSCodePresenceMonitor {
     const status = this.isActive ? 'Active' : 'Inactive';
     const lastUpdate = this.lastActivity ? new Date(this.lastActivity.timestamp).toLocaleString() : 'Never';
     const apiKeyStatus = this.apiKey ? 'Configured' : 'Not set';
+    const cacheSize = Object.keys(this.gitRepoCache).length;
     
     vscode.window.showInformationMessage(
-      `VS Code Presence Monitor - Status: ${status}, Last Update: ${lastUpdate}, Server: ${this.serverUrl}, API Key: ${apiKeyStatus}`
+      `VS Code Presence Monitor - Status: ${status}, Last Update: ${lastUpdate}, Server: ${this.serverUrl}, API Key: ${apiKeyStatus}, Cache entries: ${cacheSize}`
     );
   }
 
@@ -203,8 +308,8 @@ class VSCodePresenceMonitor {
       return;
     }
 
-    // Get Git repository information
-    const gitRepo = await this.getGitRepoInfo(workspaceFolder.uri.fsPath);
+    // Get Git repository information (cached)
+    const gitRepo = await this.getGitRepoInfoCached(workspaceFolder.uri.fsPath);
 
     // Get current selection and visible range
     const selection = editor.selection;
@@ -238,7 +343,7 @@ class VSCodePresenceMonitor {
     // Only send if activity has changed significantly
     if (this.hasActivityChanged(activity)) {
       this.lastActivity = activity;
-      await this.sendActivity(activity);
+      this.queueActivity(activity);
     }
   }
 
@@ -250,24 +355,59 @@ class VSCodePresenceMonitor {
     const last = this.lastActivity;
     const current = newActivity;
 
-    // Check if significant change occurred
+    // Check if significant change occurred (more strict criteria to reduce API calls)
     return (
       last.workspace.path !== current.workspace.path ||
       last.editor.filePath !== current.editor.filePath ||
-      last.editor.lineNumber !== current.editor.lineNumber ||
-      Math.abs(last.editor.columnNumber - current.editor.columnNumber) > 5 || // Ignore small cursor movements
-      Math.abs(last.timestamp - current.timestamp) > 30000 // Force update every 30 seconds
+      Math.abs(last.editor.lineNumber - current.editor.lineNumber) > 2 || // Ignore single line movements
+      Math.abs(last.editor.columnNumber - current.editor.columnNumber) > 10 || // Ignore small cursor movements
+      Math.abs(last.timestamp - current.timestamp) > 60000 // Force update every 60 seconds (reduced from 30)
     );
+  }
+
+  // Cached git repository information to avoid repeated file system calls
+  private async getGitRepoInfoCached(workspacePath: string): Promise<{ name: string; remote: string; branch: string } | undefined> {
+    const now = Date.now();
+    const cached = this.gitRepoCache[workspacePath];
+    
+    // Return cached result if still valid
+    if (cached && (now - cached.lastChecked) < cached.ttl) {
+      return cached.info;
+    }
+
+    try {
+      const gitDir = path.join(workspacePath, '.git');
+      
+      if (!fs.existsSync(gitDir)) {
+        // Cache negative result
+        this.gitRepoCache[workspacePath] = {
+          info: undefined,
+          lastChecked: now,
+          ttl: this.CACHE_TTL * 2 // Cache negative results longer
+        };
+        return undefined;
+      }
+
+      const info = await this.getGitRepoInfo(workspacePath);
+      
+      // Cache the result
+      this.gitRepoCache[workspacePath] = {
+        info,
+        lastChecked: now,
+        ttl: this.CACHE_TTL
+      };
+      
+      return info;
+    } catch (error) {
+      console.error('Error reading git info:', error);
+      return undefined;
+    }
   }
 
   private async getGitRepoInfo(workspacePath: string): Promise<{ name: string; remote: string; branch: string } | undefined> {
     try {
       const gitDir = path.join(workspacePath, '.git');
       
-      if (!fs.existsSync(gitDir)) {
-        return undefined;
-      }
-
       // Read current branch
       const headPath = path.join(gitDir, 'HEAD');
       let branch = 'unknown';
@@ -308,6 +448,51 @@ class VSCodePresenceMonitor {
     }
   }
 
+  // Queue-based activity sending to prevent API bombardment
+  private queueActivity(activity: VSCodeActivity): void {
+    this.sendQueue.push(activity);
+    this.processQueue();
+  }
+
+  private async processQueue(): Promise<void> {
+    if (this.isSending || this.sendQueue.length === 0) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastSentTimestamp < this.rateLimitDelay) {
+      // Schedule next attempt
+      setTimeout(() => this.processQueue(), this.rateLimitDelay - (now - this.lastSentTimestamp));
+      return;
+    }
+
+    this.isSending = true;
+    
+    try {
+      // Get the most recent activity from queue
+      const activity = this.sendQueue.pop();
+      if (!activity) {
+        this.isSending = false;
+        return;
+      }
+
+      // Clear any older activities in queue to avoid spam
+      this.sendQueue = [];
+      
+      await this.sendActivity(activity);
+      this.lastSentTimestamp = Date.now();
+    } catch (error) {
+      console.error('Error processing activity queue:', error);
+    } finally {
+      this.isSending = false;
+      
+      // Process any new items that may have been queued
+      if (this.sendQueue.length > 0) {
+        setTimeout(() => this.processQueue(), this.rateLimitDelay);
+      }
+    }
+  }
+
   private async sendActivity(activity: VSCodeActivity): Promise<void> {
     try {
       const headers: Record<string, string> = {
@@ -323,6 +508,8 @@ class VSCodePresenceMonitor {
         method: 'POST',
         headers,
         body: JSON.stringify(activity),
+        // Add timeout to prevent hanging requests
+        signal: AbortSignal.timeout(10000) // 10 second timeout
       });
 
       if (!response.ok) {
@@ -337,18 +524,56 @@ class VSCodePresenceMonitor {
             }
           });
           this.stop(); // Stop monitoring on auth failure
+        } else if (response.status === 202) {
+          // Server accepted but rate limited - this is normal
+          console.log('Activity update rate limited by server');
         } else {
           console.error('Failed to send activity:', response.statusText);
         }
       }
     } catch (error) {
-      console.error('Error sending activity:', error);
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.error('Request timeout sending activity');
+      } else {
+        console.error('Error sending activity:', error);
+      }
+    }
+  }
+
+  private async sendOfflineSignal(): Promise<void> {
+    // Send a minimal signal to indicate going offline
+    if (this.lastActivity) {
+      const offlineActivity = {
+        ...this.lastActivity,
+        timestamp: Date.now(),
+        editor: {
+          ...this.lastActivity.editor,
+          fileName: '[OFFLINE]'
+        }
+      };
+      
+      try {
+        await this.sendActivity(offlineActivity);
+      } catch (error) {
+        // Ignore errors when sending offline signal
+        console.log('Could not send offline signal:', error);
+      }
     }
   }
 
   public dispose(): void {
     this.stop();
     this.statusBarItem.dispose();
+    
+    // Clear all timers
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+    }
+    
+    // Clear caches
+    this.gitRepoCache = {};
+    this.sendQueue = [];
+    this.lastActivity = null;
   }
 }
 
@@ -394,4 +619,5 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   presenceMonitor?.dispose();
+  presenceMonitor = null;
 }

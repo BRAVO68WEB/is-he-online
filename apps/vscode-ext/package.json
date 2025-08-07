@@ -2,7 +2,7 @@
   "name": "is-he-online",
   "displayName": "Bravo's VS Code Presence Monitor",
   "description": "Real-time VSCode presence monitoring for Discord-style activity tracking",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "publisher": "bravo68web",
   "engines": {
     "vscode": "^1.95.0"
@@ -71,8 +71,9 @@
         },
         "isHeOnline.updateInterval": {
           "type": "number",
-          "default": 1000,
-          "description": "Update interval in milliseconds"
+          "default": 5000,
+          "minimum": 1000,
+          "description": "Update interval in milliseconds (minimum 1000ms to reduce server load)"
         },
         "isHeOnline.enabled": {
           "type": "boolean",
