@@ -66,30 +66,14 @@ export class UWSServer {
 
   private setupRoutes(): void {
     // Health check endpoint
-    this.app.get('/health', async (res: HttpResponse) => {
-      try {
-        const healthStats = await this.redis.getHealthStats();
-        
-        const response: HealthResponse = {
-          status: 'ok',
-          botConnected: true, // Will be updated by Discord bot
-          redisConnected: healthStats.redis_connected,
-          monitoringUser: this.targetUserId,
-          activeStreams: this.sseConnections.size,
-          hasVSCodeActivity: healthStats.vscode_active,
-          apiKeyRequired: true,
-          discordActive: healthStats.discord_active,
-          vscodeActive: healthStats.vscode_active,
-          lastDiscordUpdate: healthStats.last_discord_update,
-          lastVSCodeUpdate: healthStats.last_vscode_update,
-        };
-
+    this.app.get('/health', (res: HttpResponse) => {
+      this.getHealthData().then(response => {
         res.cork(() => {
           this.addCorsHeaders(res)
               .writeHeader('Content-Type', 'application/json')
               .end(JSON.stringify(response));
         });
-      } catch (error) {
+      }).catch(error => {
         console.error('❌ Health check error:', error);
         res.cork(() => {
           this.addCorsHeaders(res)
@@ -101,35 +85,18 @@ export class UWSServer {
                 timestamp: Date.now()
               }));
         });
-      }
+      });
     });
 
     // Current activity endpoint
-    this.app.get('/activity', async (res: HttpResponse) => {
-      try {
-        const activityData = await this.redis.getDiscordActivity();
-        
-        const response: UserActivityResponse = activityData ? {
-          ...(activityData.activity as UserActivity),
-          online_since: activityData.online_since,
-          offline_since: activityData.offline_since,
-          last_seen: activityData.last_seen,
-        } : {
-          userId: this.targetUserId,
-          username: 'Unknown',
-          discriminator: '0000',
-          status: 'offline',
-          activities: [],
-          timestamp: Date.now(),
-          last_seen: Date.now(),
-        };
-
+    this.app.get('/activity', (res: HttpResponse) => {
+      this.getActivityData().then(response => {
         res.cork(() => {
           this.addCorsHeaders(res)
               .writeHeader('Content-Type', 'application/json')
               .end(JSON.stringify(response));
         });
-      } catch (error) {
+      }).catch(error => {
         console.error('❌ Error getting activity:', error);
         res.cork(() => {
           this.addCorsHeaders(res)
@@ -140,11 +107,11 @@ export class UWSServer {
                 timestamp: Date.now()
               }));
         });
-      }
+      });
     });
 
     // Protected VSCode activity endpoint
-    this.app.post('/vscode-activity', async (res: HttpResponse, req: HttpRequest) => {
+    this.app.post('/vscode-activity', (res: HttpResponse, req: HttpRequest) => {
       const authHeader = req.getHeader('authorization');
       const apiKeyFromHeader = authHeader?.replace('Bearer ', '') || authHeader?.replace('ApiKey ', '');
 
@@ -166,62 +133,23 @@ export class UWSServer {
 
       // Read request body
       let buffer = Buffer.alloc(0);
-      res.onData(async (chunk: ArrayBuffer, isLast: boolean) => {
+      res.onData((chunk: ArrayBuffer, isLast: boolean) => {
         buffer = Buffer.concat([buffer, Buffer.from(chunk)]);
         
         if (isLast) {
-          try {
-            const activity: VSCodeActivity = JSON.parse(buffer.toString());
-            
-            // Try to update activity in Redis with caching/rate limiting
-            const updateResult = await this.redis.setVSCodeActivity(activity);
-            
-            if (updateResult.updated) {
-              console.log(`💻 VSCode activity update: ${activity.workspace.name}/${activity.editor.fileName}:${activity.editor.lineNumber}`);
-              
-              // Only broadcast if actually updated
-              this.broadcastVSCodeActivity(activity);
-              
-              const response: ApiResponse = {
-                success: true,
-                timestamp: Date.now(),
-              };
-              
-              res.cork(() => {
-                this.addCorsHeaders(res)
-                    .writeHeader('Content-Type', 'application/json')
-                    .end(JSON.stringify(response));
-              });
-            } else {
-              // Activity was rate limited or not significantly different
-              const response: ApiResponse = {
-                success: true,
-                timestamp: Date.now(),
-                error: updateResult.reason,
-              };
-              
-              res.cork(() => {
-                this.addCorsHeaders(res)
-                    .writeStatus('202 Accepted')
-                    .writeHeader('Content-Type', 'application/json')
-                    .end(JSON.stringify(response));
-              });
-            }
-          } catch (error) {
-            console.error('❌ VSCode activity error:', error);
-            const errorResponse: ApiResponse = {
-              success: false,
-              timestamp: Date.now(),
-              error: 'Invalid JSON payload or database error',
-            };
-            
+          this.processVSCodeActivity(res, buffer.toString()).catch(error => {
+            console.error('❌ Error processing VSCode activity:', error);
             res.cork(() => {
               this.addCorsHeaders(res)
-                  .writeStatus('400 Bad Request')
+                  .writeStatus('500 Internal Server Error')
                   .writeHeader('Content-Type', 'application/json')
-                  .end(JSON.stringify(errorResponse));
+                  .end(JSON.stringify({
+                    success: false,
+                    timestamp: Date.now(),
+                    error: 'Internal server error',
+                  }));
             });
-          }
+          });
         }
       });
 
@@ -316,6 +244,98 @@ export class UWSServer {
       }
     } catch (error) {
       console.error('❌ Error in sendInitialSSEData:', error);
+    }
+  }
+
+  private async getHealthData(): Promise<HealthResponse> {
+    const healthStats = await this.redis.getHealthStats();
+    
+    return {
+      status: 'ok',
+      botConnected: true, // Will be updated by Discord bot
+      redisConnected: healthStats.redis_connected,
+      monitoringUser: this.targetUserId,
+      activeStreams: this.sseConnections.size,
+      hasVSCodeActivity: healthStats.vscode_active,
+      apiKeyRequired: true,
+      discordActive: healthStats.discord_active,
+      vscodeActive: healthStats.vscode_active,
+      lastDiscordUpdate: healthStats.last_discord_update,
+      lastVSCodeUpdate: healthStats.last_vscode_update,
+    };
+  }
+
+  private async getActivityData(): Promise<UserActivityResponse> {
+    const activityData = await this.redis.getDiscordActivity();
+    
+    return activityData ? {
+      ...(activityData.activity as UserActivity),
+      online_since: activityData.online_since,
+      offline_since: activityData.offline_since,
+      last_seen: activityData.last_seen,
+    } : {
+      userId: this.targetUserId,
+      username: 'Unknown',
+      discriminator: '0000',
+      status: 'offline' as any,
+      activities: [],
+      timestamp: Date.now(),
+      last_seen: Date.now(),
+    };
+  }
+
+  private async processVSCodeActivity(res: HttpResponse, data: string): Promise<void> {
+    try {
+      const activity: VSCodeActivity = JSON.parse(data);
+      
+      // Try to update activity in Redis with caching/rate limiting
+      const updateResult = await this.redis.setVSCodeActivity(activity);
+      
+      if (updateResult.updated) {
+        console.log(`💻 VSCode activity update: ${activity.workspace.name}/${activity.editor.fileName}:${activity.editor.lineNumber}`);
+        
+        // Only broadcast if actually updated
+        await this.broadcastVSCodeActivity(activity);
+        
+        const response: ApiResponse = {
+          success: true,
+          timestamp: Date.now(),
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(response));
+        });
+      } else {
+        // Activity was rate limited or not significantly different
+        const response: ApiResponse = {
+          success: true,
+          timestamp: Date.now(),
+          error: updateResult.reason,
+        };
+        
+        res.cork(() => {
+          this.addCorsHeaders(res)
+              .writeStatus('202 Accepted')
+              .writeHeader('Content-Type', 'application/json')
+              .end(JSON.stringify(response));
+        });
+      }
+    } catch (error) {
+      console.error('❌ VSCode activity parsing error:', error);
+      const errorResponse: ApiResponse = {
+        success: false,
+        timestamp: Date.now(),
+        error: 'Invalid JSON payload or database error',
+      };
+      
+      res.cork(() => {
+        this.addCorsHeaders(res)
+            .writeStatus('400 Bad Request')
+            .writeHeader('Content-Type', 'application/json')
+            .end(JSON.stringify(errorResponse));
+      });
     }
   }
 
