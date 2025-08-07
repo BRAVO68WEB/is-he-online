@@ -39,7 +39,7 @@ This project uses a **Turborepo monorepo** structure for better organization and
 ```bash
 git clone https://github.com/BRAVO68WEB/is-he-online
 cd is-he-online
-npm install
+yarn install
 ```
 
 ### 2. Configure Environment
@@ -51,20 +51,20 @@ cp .env.example .env
 
 ### 3. Build All Packages
 ```bash
-npm run build
+yarn run build
 ```
 
 ### 4. Start Development
 ```bash
 # Start API server
-npm run dev --workspace packages/api
+yarn run dev --workspace packages/api
 
 # Start demo client (new terminal)
-npm run dev --workspace apps/demo
+yarn run dev --workspace apps/demo
 
 # Package VSCode extension (optional)
-npm run build --workspace apps/vscode-ext
-npm run package --workspace apps/vscode-ext
+yarn run build --workspace apps/vscode-ext
+yarn run package --workspace apps/vscode-ext
 ```
 
 ## 📦 Packages
@@ -108,18 +108,18 @@ Bravo's VSCode extension that monitors presence activity and broadcasts it to th
 
 | Command | Description |
 |---------|-------------|
-| `npm run build` | Build all packages |
-| `npm run dev` | Start all packages in development mode |
-| `npm run lint` | Lint all packages |
-| `npm run clean` | Clean all build outputs |
+| `yarn run build` | Build all packages |
+| `yarn run dev` | Start all packages in development mode |
+| `yarn run lint` | Lint all packages |
+| `yarn run clean` | Clean all build outputs |
 
 ### Workspace Commands
 
 | Workspace | Description |
 |-----------|-------------|
-| `npm run dev --workspace packages/api` | Start broadcast API server |
-| `npm run dev --workspace apps/demo` | Start demo dashboard |
-| `npm run build --workspace apps/vscode-ext` | Build VS Code extension |
+| `yarn run dev --workspace packages/api` | Start broadcast API server |
+| `yarn run dev --workspace apps/demo` | Start demo dashboard |
+| `yarn run build --workspace apps/vscode-ext` | Build VS Code extension |
 
 ## 🔧 Configuration
 
