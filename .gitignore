@@ -102,3 +102,4 @@ logs
 # Build outputs
 build/
 dist/
+.vscode

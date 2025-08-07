@@ -182,6 +182,18 @@
                     const data = JSON.parse(event.data);
                     this.log('💓 Heartbeat: ' + new Date(data.timestamp).toLocaleTimeString());
                 });
+
+                this.eventSource.addEventListener('vscode-offline', (event) => {
+                    const data = JSON.parse(event.data);
+                    this.vscodeActivity.innerHTML = '<p>VSCode is offline - Extension closed or heartbeat timeout</p>';
+                    this.log('💻❌ VSCode went offline: ' + data.reason);
+                });
+
+                this.eventSource.addEventListener('discord-offline', (event) => {
+                    const data = JSON.parse(event.data);
+                    this.activities.innerHTML = '<p>Discord is offline - Bot disconnected or heartbeat timeout</p>';
+                    this.log('👤❌ Discord went offline: ' + data.reason);
+                });
             }
 
             updateConnectionStatus() {
@@ -243,21 +255,45 @@
             }
 
             updateVSCodeActivity(activity) {
+                const sessionInfo = activity.session ? `
+                    <div class="activity-details"><strong>Session:</strong> ${activity.session.sessionId}</div>
+                    <div class="activity-details"><strong>Session Duration:</strong> ${this.formatDuration(activity.session.duration)}</div>
+                    <div class="activity-details"><strong>Session Status:</strong> ${activity.session.status}</div>
+                ` : '';
+
+                const editorInfo = activity.activity ? `
+                    <div class="activity-details"><strong>File:</strong> ${activity.activity.editor.fileName}</div>
+                    <div class="activity-details"><strong>Path:</strong> ${activity.activity.editor.filePath}</div>
+                    <div class="activity-details"><strong>Language:</strong> ${activity.activity.editor.language}</div>
+                    <div class="activity-details"><strong>Position:</strong> Line ${activity.activity.editor.lineNumber}, Column ${activity.activity.editor.columnNumber}</div>
+                    ${activity.activity.workspace.gitRepo ? `
+                        <div class="activity-details"><strong>Git Repo:</strong> ${activity.activity.workspace.gitRepo.name}</div>
+                        <div class="activity-details"><strong>Branch:</strong> ${activity.activity.workspace.gitRepo.branch}</div>
+                    ` : ''}
+                ` : '<div class="activity-details"><em>No current activity</em></div>';
+
                 this.vscodeActivity.innerHTML = `
                     <div class="activity-item">
-                        <div class="activity-name">📁 ${activity.workspace.name}</div>
-                        <div class="activity-details"><strong>File:</strong> ${activity.editor.fileName}</div>
-                        <div class="activity-details"><strong>Path:</strong> ${activity.editor.filePath}</div>
-                        <div class="activity-details"><strong>Language:</strong> ${activity.editor.language}</div>
-                        <div class="activity-details"><strong>Position:</strong> Line ${activity.editor.lineNumber}, Column ${activity.editor.columnNumber}</div>
-                        ${activity.workspace.gitRepo ? `
-                            <div class="activity-details"><strong>Git Repo:</strong> ${activity.workspace.gitRepo.name}</div>
-                            <div class="activity-details"><strong>Branch:</strong> ${activity.workspace.gitRepo.branch}</div>
-                        ` : ''}
-                        <div class="activity-details"><strong>Session:</strong> ${activity.sessionId}</div>
-                        <div class="activity-details"><strong>Last Update:</strong> ${new Date(activity.timestamp).toLocaleString()}</div>
+                        <div class="activity-name">📁 ${activity.activity?.workspace.name || 'VSCode Session'}</div>
+                        ${editorInfo}
+                        ${sessionInfo}
+                        <div class="activity-details"><strong>Last Seen:</strong> ${new Date(activity.last_seen).toLocaleString()}</div>
                     </div>
                 `;
+            }
+
+            formatDuration(ms) {
+                const seconds = Math.floor(ms / 1000);
+                const minutes = Math.floor(seconds / 60);
+                const hours = Math.floor(minutes / 60);
+                
+                if (hours > 0) {
+                    return `${hours}h ${minutes % 60}m ${seconds % 60}s`;
+                } else if (minutes > 0) {
+                    return `${minutes}m ${seconds % 60}s`;
+                } else {
+                    return `${seconds}s`;
+                }
             }
 
             log(message) {
