@@ -31,7 +31,7 @@ This project uses a **Turborepo monorepo** structure for better organization and
 ## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 18+ 
+- Node.js 20+ 
 - Discord Bot Token
 - Target Discord User ID
 
