@@ -37,7 +37,7 @@ This project uses a **Turborepo monorepo** structure for better organization and
 
 ### 1. Clone and Install
 ```bash
-git clone <repository-url>
+git clone https://github.com/BRAVO68WEB/is-he-online
 cd is-he-online
 npm install
 ```
