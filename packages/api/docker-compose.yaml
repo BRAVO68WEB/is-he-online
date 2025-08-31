@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  api:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: is-he-online-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # Discord Configuration
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - TARGET_USER_ID=${TARGET_USER_ID}
+      
+      # Server Configuration
+      - PORT=3000
+      - NODE_ENV=production
+      
+      # API Security
+      - API_KEY=${API_KEY}
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Logging configuration
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Security options
+    security_opt:
+      - no-new-privileges:true
+    
+    # Read-only root filesystem (except for necessary writable directories)
+    read_only: true
+    tmpfs:
+      - /tmp:noexec,nosuid,size=100m
+    
+# Named volumes for persistent data (if needed in future)
+volumes:
+  api_data:
+    driver: local

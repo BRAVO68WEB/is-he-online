@@ -1,0 +1,27 @@
+{
+  "name": "@is-he-online/broadcast-api",
+  "version": "1.0.0",
+  "description": "Ultra-fast uWebSockets.js API for Discord and VSCode activity broadcasting",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^17.2.1",
+    "node-fetch": "^3.3.2",
+    "uws": "github:uNetworking/uWebSockets.js#v20.44.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "tsx": "^4.7.1",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
