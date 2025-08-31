@@ -42,7 +42,6 @@ Ultra-fast uWebSockets.js API for real-time Discord presence and VSCode activity
 | `DISCORD_TOKEN` | ✅ | Discord bot token |
 | `TARGET_USER_ID` | ✅ | Discord user ID to monitor |
 | `PORT` | ❌ | Server port (default: 3000) |
-| `API_KEY` | ❌ | API key for VSCode endpoint (auto-generated if not provided) |
 
 ## API Endpoints
 

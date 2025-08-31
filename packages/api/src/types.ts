@@ -1,4 +1,4 @@
-import { ActivityType, type PresenceStatus } from 'discord.js';
+import { ActivityType, type PresenceStatus } from "discord.js";
 
 // Types for user activity data
 export interface UserActivity {

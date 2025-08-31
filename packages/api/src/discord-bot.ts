@@ -1,5 +1,6 @@
-import { Client, GatewayIntentBits, Events, Presence, ActivityType } from 'discord.js';
-import type { UserActivity } from './types.js';
+import { Client, Events, GatewayIntentBits, Presence } from "discord.js";
+
+import type { UserActivity } from "./types.js";
 
 export class DiscordBot {
   private client: Client;
@@ -32,7 +33,7 @@ export class DiscordBot {
         const activity = this.extractUserActivity(newPresence);
         this.currentActivity = activity;
         
-        console.log(`👤 User activity updated: ${activity.status} - ${activity.activities.map(a => a.name).join(', ')}`);
+        console.log(`👤 User activity updated: ${activity.status} - ${activity.activities.map(a => a.name).join(", ")}`);
         
         if (this.onActivityUpdate) {
           this.onActivityUpdate(activity);
@@ -41,12 +42,12 @@ export class DiscordBot {
     });
 
     this.client.on(Events.Error, (error) => {
-      console.error('❌ Discord client error:', error);
+      console.error("❌ Discord client error:", error);
     });
   }
 
   private checkInitialPresence(): void {
-    this.client.guilds.cache.forEach(guild => {
+    for (const [, guild] of this.client.guilds.cache) {
       const member = guild.members.cache.get(this.targetUserId);
       if (member?.presence) {
         console.log(`🔍 Found initial presence for user in guild: ${guild.name}`);
@@ -57,13 +58,13 @@ export class DiscordBot {
           this.onActivityUpdate(activity);
         }
       }
-    });
+    }
   }
 
   private extractUserActivity(presence: Presence): UserActivity {
     const user = presence.user;
     if (!user) {
-      throw new Error('User not found in presence');
+      throw new Error("User not found in presence");
     }
 
     return {
@@ -89,7 +90,7 @@ export class DiscordBot {
     try {
       await this.client.login(token);
     } catch (error) {
-      console.error('❌ Failed to login to Discord:', error);
+      console.error("❌ Failed to login to Discord:", error);
       throw error;
     }
   }

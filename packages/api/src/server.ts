@@ -1,6 +1,8 @@
-import { App, type HttpResponse, type HttpRequest, type TemplatedApp } from 'uws';
-import { randomBytes } from 'crypto';
-import type { UserActivity, HealthResponse, ApiResponse } from './types.js';
+import { randomBytes } from "node:crypto";
+
+import { App, type HttpResponse, type TemplatedApp } from "uws";
+
+import type { HealthResponse, UserActivity } from "./types.js";
 
 export class UWSServer {
   private app: TemplatedApp;
@@ -18,8 +20,8 @@ export class UWSServer {
     this.currentDiscordActivity = {
       userId: this.targetUserId,
       username: this.targetUserName,
-      discriminator: '0',
-      status: 'offline',
+      discriminator: "0",
+      status: "offline",
       activities: [],
       timestamp: Date.now(),
     };
@@ -29,36 +31,36 @@ export class UWSServer {
   }
 
   private generateApiKey(): string {
-    const key = randomBytes(32).toString('hex');
+    const key = randomBytes(32).toString("hex");
     console.log(`🔑 Generated API Key: ${key}`);
-    console.log('💡 Add this to your .env file as API_KEY=your_generated_key');
+    console.log("💡 Add this to your .env file as API_KEY=your_generated_key");
     return key;
   }
 
   private setupCors(): void {
     // Handle CORS preflight requests
-    this.app.options('/*', (res: HttpResponse) => {
+    this.app.options("/*", (res: HttpResponse) => {
       res.cork(() => {
-        res.writeHeader('Access-Control-Allow-Origin', '*')
-           .writeHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-           .writeHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-           .writeHeader('Access-Control-Max-Age', '86400')
+        res.writeHeader("Access-Control-Allow-Origin", "*")
+           .writeHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+           .writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization")
+           .writeHeader("Access-Control-Max-Age", "86400")
            .end();
       });
     });
   }
 
   private addCorsHeaders(res: HttpResponse): HttpResponse {
-    return res.writeHeader('Access-Control-Allow-Origin', '*')
-              .writeHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-              .writeHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.writeHeader("Access-Control-Allow-Origin", "*")
+              .writeHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+              .writeHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   }
 
   private setupRoutes(): void {
     // Health check endpoint
-    this.app.get('/health', (res: HttpResponse) => {
+    this.app.get("/health", (res: HttpResponse) => {
       const response: HealthResponse = {
-        status: 'ok',
+        status: "ok",
         botConnected: true, // Will be updated by Discord bot
         monitoringUser: this.targetUserId,
         activeStreams: this.sseConnections.size,
@@ -67,38 +69,38 @@ export class UWSServer {
 
       res.cork(() => {
         this.addCorsHeaders(res)
-            .writeHeader('Content-Type', 'application/json')
+            .writeHeader("Content-Type", "application/json")
             .end(JSON.stringify(response));
       });
     });
 
     // Current activity endpoint
-    this.app.get('/activity', (res: HttpResponse) => {
+    this.app.get("/activity", (res: HttpResponse) => {
       const activity = this.currentDiscordActivity || {
         userId: this.targetUserId,
-        username: 'Unknown',
-        discriminator: '0000',
-        status: 'offline',
+        username: "Unknown",
+        discriminator: "0000",
+        status: "offline",
         activities: [],
         timestamp: Date.now(),
       };
 
       res.cork(() => {
         this.addCorsHeaders(res)
-            .writeHeader('Content-Type', 'application/json')
+            .writeHeader("Content-Type", "application/json")
             .end(JSON.stringify(activity));
       });
     });
 
     // Server-Sent Events endpoint
-    this.app.get('/events', (res: HttpResponse, req: HttpRequest) => {
+    this.app.get("/events", (res: HttpResponse) => {
       // Set SSE headers with CORS
       res.cork(() => {
         this.addCorsHeaders(res)
-            .writeHeader('Content-Type', 'text/event-stream')
-            .writeHeader('Cache-Control', 'no-cache')
-            .writeHeader('Connection', 'keep-alive')
-            .writeHeader('X-Accel-Buffering', 'no'); // Disable Nginx buffering
+            .writeHeader("Content-Type", "text/event-stream")
+            .writeHeader("Cache-Control", "no-cache")
+            .writeHeader("Connection", "keep-alive")
+            .writeHeader("X-Accel-Buffering", "no"); // Disable Nginx buffering
       });
 
       // Add to active connections
@@ -107,17 +109,17 @@ export class UWSServer {
 
       // Send initial data if available
       if (this.currentDiscordActivity) {
-        this.sendSSEMessage(res, 'activity-update', this.currentDiscordActivity);
+        this.sendSSEMessage(res, "activity-update", this.currentDiscordActivity);
       }
 
       // Setup heartbeat
       const heartbeatInterval = setInterval(() => {
-        if (!res.aborted) {
-          this.sendSSEMessage(res, 'heartbeat', { timestamp: Date.now() });
-        } else {
+        if (res.aborted) {
           clearInterval(heartbeatInterval);
+        } else {
+          this.sendSSEMessage(res, "heartbeat", { timestamp: Date.now() });
         }
-      }, 30000);
+      }, 30_000);
 
       // Handle connection close
       res.onAborted(() => {
@@ -128,21 +130,21 @@ export class UWSServer {
     });
 
     // Catch-all route for unmatched paths
-    this.app.any('/*', (res: HttpResponse) => {
+    this.app.any("/*", (res: HttpResponse) => {
       res.cork(() => {
         this.addCorsHeaders(res)
-            .writeStatus('404 Not Found')
-            .writeHeader('Content-Type', 'application/json')
+            .writeStatus("404 Not Found")
+            .writeHeader("Content-Type", "application/json")
             .end(JSON.stringify({ 
-              error: 'Not Found', 
-              message: 'The requested endpoint does not exist',
+              error: "Not Found", 
+              message: "The requested endpoint does not exist",
               timestamp: Date.now()
             }));
       });
     });
   }
 
-  private sendSSEMessage(res: HttpResponse, event: string, data: any): void {
+  private sendSSEMessage(res: HttpResponse, event: string, data: unknown): void {
     if (!res.aborted) {
       const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
       res.cork(() => {
@@ -161,16 +163,16 @@ export class UWSServer {
       if (connection.aborted) {
         deadConnections.push(connection);
       } else {
-        this.sendSSEMessage(connection, 'activity-update', activity);
+        this.sendSSEMessage(connection, "activity-update", activity);
       }
     }
     
     // Clean up dead connections
-    deadConnections.forEach(conn => this.sseConnections.delete(conn));
+    for (const conn of deadConnections) this.sseConnections.delete(conn);
   }
 
   public listen(): void {
-    this.app.listen("0.0.0.0", this.port, (token: any) => {
+    this.app.listen("0.0.0.0", this.port, (token: unknown) => {
       if (token) {
         console.log(`🚀 Server starting on http://localhost:${this.port}`);
         console.log(`📡 SSE endpoint: http://localhost:${this.port}/events`);

@@ -11,20 +11,15 @@ A blazing-fast, real-time presence monitoring system for Discord and VSCode acti
 This project uses a **Turborepo monorepo** structure for better organization and development experience:
 
 ```
-├── packages/
-│   └── api/              # @is-he-online/broadcast-api - Ultra-fast uWebSockets.js server
-├── apps/
-│   ├── demo/             # @is-he-online/demo - Real-time web dashboard  
-│   └── vscode-ext/       # @is-he-online/vsc - VS Code presence monitor
+└── packages/
+    └── api/              # @is-he-online/broadcast-api - Ultra-fast uWebSockets.js server
 ```
 
 ## ⚡ Key Features
 
 - 🚀 **Ultra-fast uWebSockets.js** - C++ performance, 8x faster than Node.js HTTP
 - 📡 **Unlimited SSE streaming** - No timeout limitations, infinite connections
-- 🔒 **Secure API authentication** - API key-based middleware protection
 - 👤 **Real-time Discord monitoring** - Track user presence and activities
-- 💻 **VSCode integration** - Monitor coding sessions, workspace, and Git info
 - 🏗️ **Modern monorepo** - Turborepo for efficient development workflow
 - 🎯 **TypeScript everywhere** - Full type safety across all packages
 
@@ -51,20 +46,13 @@ cp .env.example .env
 
 ### 3. Build All Packages
 ```bash
-npm run build
+yarn build
 ```
 
 ### 4. Start Development
 ```bash
 # Start API server
-npm run dev --workspace packages/api
-
-# Start demo client (new terminal)
-npm run dev --workspace apps/demo
-
-# Package VSCode extension (optional)
-npm run build --workspace apps/vscode-ext
-npm run package --workspace apps/vscode-ext
+yarn dev --  -- --workspace packages/api
 ```
 
 ## 📦 Packages
@@ -75,32 +63,12 @@ Ultra-fast Discord and VSCode activity broadcasting API built with uWebSockets.j
 **Features:**
 - Discord bot integration with presence monitoring
 - Real-time SSE streaming without timeouts
-- Secure API key authentication for VSCode endpoint
 - Health monitoring and activity endpoints
 
 **Tech Stack:**
 - uWebSockets.js for ultra-fast HTTP/SSE
 - Discord.js for bot functionality
 - TypeScript for type safety
-
-### 🌐 Demo Dashboard (`@is-he-online/demo`)
-Real-time web dashboard for visualizing Discord and VSCode presence activity.
-
-**Features:**
-- Live SSE connection to API server
-- Real-time Discord presence display
-- VSCode coding session visualization
-- Modern, responsive UI
-
-### 🔧 VS Code Presence Monitor (`@is-he-online/vsc`)
-Bravo's VSCode extension that monitors presence activity and broadcasts it to the API.
-
-**Features:**
-- Real-time workspace and file tracking
-- Git repository information detection
-- Secure API communication with key authentication
-- Configurable update intervals
-- Status bar integration
 
 ## 🛠️ Development
 
@@ -115,11 +83,9 @@ Bravo's VSCode extension that monitors presence activity and broadcasts it to th
 
 ### Workspace Commands
 
-| Workspace | Description |
-|-----------|-------------|
-| `npm run dev --workspace packages/api` | Start broadcast API server |
-| `npm run dev --workspace apps/demo` | Start demo dashboard |
-| `npm run build --workspace apps/vscode-ext` | Build VS Code extension |
+| Workspace  | Description |
+|------------|-------------|
+| `yarn dev` | Start broadcast API server |
 
 ## 🔧 Configuration
 
@@ -127,15 +93,9 @@ Bravo's VSCode extension that monitors presence activity and broadcasts it to th
 ```env
 DISCORD_TOKEN=your_discord_bot_token
 TARGET_USER_ID=your_discord_user_id
+TARGET_USER_NAME=your_discord_user_name
 PORT=3000
-API_KEY=your_secure_api_key  # Optional, auto-generated if not provided
 ```
-
-### VS Code Extension Settings  
-- **Server URL**: `http://localhost:3000` (default)
-- **Update Interval**: `1000ms` (default)
-- **API Key**: Set via command palette
-- **Enable/Disable**: Toggle presence monitoring
 
 ## 📊 API Endpoints
 
@@ -144,7 +104,6 @@ API_KEY=your_secure_api_key  # Optional, auto-generated if not provided
 | `/health` | GET | Health check and status | None |
 | `/activity` | GET | Current Discord activity | None |
 | `/events` | GET | SSE stream for real-time updates | None |
-| `/vscode-activity` | POST | VSCode activity updates | 🔒 API Key Required |
 
 ## 🎯 Performance Benefits
 
@@ -167,12 +126,6 @@ curl http://localhost:3000/health
 
 # Test SSE connection
 curl -N http://localhost:3000/events
-
-# Test protected endpoint (with API key)
-curl -X POST -H "Authorization: Bearer <API_KEY>" \
-     -H "Content-Type: application/json" \
-     -d '{"workspace":{"name":"test"},"editor":{"fileName":"test.ts"}}' \
-     http://localhost:3000/vscode-activity
 ```
 
 ## 🤝 Contributing

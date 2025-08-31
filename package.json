@@ -9,13 +9,16 @@
   "scripts": {
     "build": "dotenv -- turbo build",
     "dev": "dotenv -- turbo dev",
+    "dev:api": "dotenv -- turbo dev --filter @is-he-online/broadcast-api dev",
     "lint": "turbo lint",
     "format": "prettier --write \"**/*.{ts,tsx,md}\"",
     "clean": "turbo clean"
   },
   "devDependencies": {
+    "@bravo68web/eslint-config": "^1.2.5",
     "@turbo/gen": "^1.12.4",
     "dotenv-cli": "^10.0.0",
+    "eslint": "^8",
     "minimatch": "^10.0.3",
     "prettier": "^3.2.5",
     "turbo": "^1.12.4",
@@ -23,6 +26,12 @@
   },
   "packageManager": "yarn@1.22.22",
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
+  },
+  "eslintConfig": {
+    "extends": "@bravo68web/eslint-config",
+    "rules": {
+      "unicorn/no-process-exit": "off"
+    }
   }
 }
