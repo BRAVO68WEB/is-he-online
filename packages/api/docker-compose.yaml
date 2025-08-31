@@ -8,19 +8,17 @@ services:
     container_name: is-he-online-api
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "3000"
     environment:
       # Discord Configuration
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - TARGET_USER_ID=${TARGET_USER_ID}
-      
+      - TARGET_USER_NAME=${TARGET_USER_NAME}
+
       # Server Configuration
       - PORT=3000
       - NODE_ENV=production
       
-      # API Security
-      - API_KEY=${API_KEY}
-    
     # Health check
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"]
